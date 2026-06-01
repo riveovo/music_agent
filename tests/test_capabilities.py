@@ -19,7 +19,9 @@ from music_agent.capabilities import (
     separate_stems,
 )
 from music_agent.errors import MusicAgentError
+from music_agent.music_analysis import EssentiaAnalysisOutput
 from music_agent.separation.msst import MSSTSeparationOutput, MSSTStageOutput, demix
+from music_agent.style_recognition import EssentiaStyleOutput
 from music_agent.voice_conversion import SVCFusionOutput
 
 
@@ -117,6 +119,98 @@ class CapabilityTests(unittest.TestCase):
             self.assertEqual(result["files_processed"], 2)
             self.assertEqual(result["files_skipped"], 3)
             self.assertTrue(Path(str(result["result_json"])).exists())
+
+    def test_analyze_audio_essentia_provider_uses_backend_and_writes_result_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            audio = tmp_path / "input.wav"
+            audio.write_bytes(b"fake wav")
+            metadata = {
+                "streams": [
+                    {
+                        "codec_type": "audio",
+                        "duration": "64.0",
+                        "channels": 2,
+                        "sample_rate": "44100",
+                        "codec_name": "pcm_s16le",
+                    }
+                ],
+                "format": {"format_name": "wav", "bit_rate": "1411200", "size": "1000"},
+            }
+            messages: list[str] = []
+
+            fake_output = EssentiaAnalysisOutput(
+                tempo={"bpm": 128.0, "confidence": 0.82, "method": "essentia_music_extractor"},
+                meter={"beats": [0.0, 0.5, 1.0, 1.5], "beats_count": 4, "downbeats": [0.0]},
+                tonal={"key": "A", "scale": "minor", "key_strength": 0.7, "profile": "edma", "alternatives": []},
+                chords={
+                    "key": "A",
+                    "scale": "minor",
+                    "histogram": {"Am": 0.5},
+                    "sequence": [{"start_seconds": 0.0, "end_seconds": 2.0, "chord": "Am"}],
+                },
+                spectral={"spectral_centroid_mean": 2200.0},
+                sections=[
+                    {"start_seconds": 0.0, "end_seconds": 32.0, "label": "A"},
+                    {"start_seconds": 32.0, "end_seconds": 64.0, "label": "B"},
+                ],
+                descriptors={"rhythm": {"rhythm.danceability": 1.1}},
+                extractor_version="test",
+            )
+
+            def fake_backend(
+                audio_path: Path,
+                config: object = None,
+                progress: object = None,
+            ) -> EssentiaAnalysisOutput:
+                if progress is not None:
+                    progress("fake Essentia analysis progress")
+                return fake_output
+
+            with mock.patch("music_agent.capabilities.analyze.ffprobe_json", return_value=metadata):
+                with mock.patch("music_agent.capabilities.analyze._measure_loudness", return_value={"mean_db": -11.0, "max_db": -1.0}):
+                    with mock.patch("music_agent.capabilities.analyze.analyze_with_essentia", side_effect=fake_backend):
+                        result = analyze_audio(
+                            audio,
+                            output_dir=tmp_path / "analysis",
+                            provider="essentia",
+                            essentia_max_sections=8,
+                            progress=messages.append,
+                        )
+
+            self.assertEqual(result["provider"], "essentia")
+            self.assertEqual(result["quality"], "essentia_music_analysis")
+            self.assertEqual(result["tempo"]["bpm"], 128.0)
+            self.assertEqual(result["tonal"]["key"], "A")
+            self.assertEqual(result["sections"][0]["label"], "A")
+            self.assertEqual(result["summary"]["musical"]["structure"], "A-B")
+            self.assertTrue(Path(str(result["result_json"])).exists())
+            self.assertIn("fake Essentia analysis progress", messages)
+
+    def test_analyze_audio_rejects_unknown_provider(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            audio = Path(tmp) / "input.wav"
+            audio.write_bytes(b"fake wav")
+
+            with self.assertRaisesRegex(MusicAgentError, "Unknown analysis provider"):
+                analyze_audio(audio, provider="missing")
+
+    def test_real_essentia_analysis_integration_from_env(self) -> None:
+        audio = os.getenv("MUSIC_AGENT_TEST_ANALYSIS_AUDIO")
+        if not audio:
+            self.skipTest("Set MUSIC_AGENT_TEST_ANALYSIS_AUDIO to run the real Essentia analysis integration test.")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            result = analyze_audio(
+                audio,
+                output_dir=Path(tmp) / "analysis",
+                provider="essentia",
+            )
+
+            self.assertEqual(result["provider"], "essentia")
+            self.assertEqual(result["quality"], "essentia_music_analysis")
+            self.assertIn("tempo", result)
+            self.assertIn("sections", result)
 
     def test_convert_voice_batch_processes_directory(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -243,6 +337,97 @@ class CapabilityTests(unittest.TestCase):
 
             with self.assertRaisesRegex(MusicAgentError, "model_path and speaker"):
                 convert_voice(audio, provider="svcfusion")
+
+    def test_recognize_style_essentia_provider_uses_backend_and_writes_result_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            audio = tmp_path / "input.wav"
+            embedding = tmp_path / "embedding.pb"
+            classifier = tmp_path / "classifier.pb"
+            metadata = tmp_path / "metadata.json"
+            audio.write_bytes(b"fake wav")
+            embedding.write_bytes(b"fake")
+            classifier.write_bytes(b"fake")
+            metadata.write_text('{"classes": ["Electronic---House", "Rock---Indie Rock"]}', encoding="utf-8")
+            messages: list[str] = []
+
+            fake_analysis = {
+                "audio": str(audio),
+                "duration_seconds": 42.0,
+                "channels": 2,
+                "loudness": {"mean_db": -12.0},
+                "conversion": {"required": False},
+            }
+
+            def fake_backend(
+                audio_path: Path,
+                resolved_config: object,
+                progress: object = None,
+            ) -> EssentiaStyleOutput:
+                if progress is not None:
+                    progress("fake Essentia progress")
+                return EssentiaStyleOutput(
+                    style="electronic",
+                    confidence=0.91,
+                    top_styles=[{"style": "electronic", "score": 0.91, "evidence": ["Electronic---House"]}],
+                    raw_tags=[{"label": "Electronic---House", "score": 0.91}],
+                    segments=[{"index": 1, "start_seconds": 0.0, "end_seconds": 30.0}],
+                    labels_count=2,
+                    model_type=resolved_config.model_type,
+                    embedding_model_path=resolved_config.embedding_model_path,
+                    classifier_model_path=resolved_config.classifier_model_path,
+                    metadata_path=resolved_config.metadata_path,
+                )
+
+            with mock.patch("music_agent.capabilities.recognize_style.analyze_audio", return_value=fake_analysis):
+                with mock.patch("music_agent.capabilities.recognize_style.recognize_style_with_essentia", side_effect=fake_backend):
+                    result = recognize_style(
+                        audio,
+                        output_dir=tmp_path / "style",
+                        provider="essentia",
+                        essentia_embedding_model_path=embedding,
+                        essentia_classifier_model_path=classifier,
+                        essentia_metadata_path=metadata,
+                        progress=messages.append,
+                    )
+
+            self.assertEqual(result["provider"], "essentia")
+            self.assertEqual(result["quality"], "essentia_discogs_maest")
+            self.assertEqual(result["style"], "electronic")
+            self.assertEqual(result["confidence"], 0.91)
+            self.assertEqual(result["top_styles"][0]["style"], "electronic")
+            self.assertTrue(Path(str(result["result_json"])).exists())
+            self.assertIn("fake Essentia progress", messages)
+
+    def test_recognize_style_essentia_provider_requires_complete_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            audio = Path(tmp) / "input.wav"
+            audio.write_bytes(b"fake wav")
+
+            with self.assertRaisesRegex(MusicAgentError, "embedding_model_path, classifier_model_path, and metadata_path"):
+                recognize_style(audio, provider="essentia")
+
+    def test_real_essentia_style_integration_from_env(self) -> None:
+        audio = os.getenv("MUSIC_AGENT_TEST_STYLE_AUDIO")
+        embedding = os.getenv("MUSIC_AGENT_TEST_STYLE_ESSENTIA_EMBEDDING_MODEL_PATH")
+        classifier = os.getenv("MUSIC_AGENT_TEST_STYLE_ESSENTIA_CLASSIFIER_MODEL_PATH")
+        metadata = os.getenv("MUSIC_AGENT_TEST_STYLE_ESSENTIA_METADATA_PATH")
+        if not all([audio, embedding, classifier, metadata]):
+            self.skipTest("Set MUSIC_AGENT_TEST_STYLE_* env vars to run the real Essentia style integration test.")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            result = recognize_style(
+                audio,
+                output_dir=Path(tmp) / "style",
+                provider="essentia",
+                essentia_embedding_model_path=embedding,
+                essentia_classifier_model_path=classifier,
+                essentia_metadata_path=metadata,
+            )
+
+            self.assertEqual(result["provider"], "essentia")
+            self.assertEqual(result["quality"], "essentia_discogs_maest")
+            self.assertTrue(result["raw_tags"])
 
     def test_msst_provider_requires_complete_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

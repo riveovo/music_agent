@@ -37,6 +37,32 @@ class AgentRouterTests(unittest.TestCase):
             self.assertEqual(result["result"]["provider"], "synth")
             self.assertTrue(output.exists())
 
+    def test_agent_passes_analysis_provider_args(self) -> None:
+        with mock.patch("music_agent.agent.router.analyze_audio", return_value={"provider": "essentia"}) as mocked:
+            result = route_request(
+                "分析这首歌",
+                audio="song.wav",
+                audio_output_dir="outputs/analysis",
+                audio_recursive=True,
+                audio_keep_converted=True,
+                audio_ncm_converter="/opt/homebrew/bin/ncmdump",
+                analysis_provider="essentia",
+                analysis_essentia_max_sections=9,
+            )
+
+        self.assertEqual(result["routed_to"], "analyze")
+        self.assertEqual(result["result"]["provider"], "essentia")
+        mocked.assert_called_once_with(
+            "song.wav",
+            provider="essentia",
+            output_dir="outputs/analysis",
+            recursive=True,
+            keep_converted=True,
+            ncm_converter="/opt/homebrew/bin/ncmdump",
+            essentia_max_sections=9,
+            progress=None,
+        )
+
     def test_agent_passes_slice_audio_args(self) -> None:
         with mock.patch("music_agent.agent.router.slice_audio", return_value={"capability": "slice_audio"}) as mocked:
             result = route_request(
@@ -59,6 +85,40 @@ class AgentRouterTests(unittest.TestCase):
             max_length_ms=10000,
             keep_converted=True,
             ncm_converter="/opt/homebrew/bin/ncmdump",
+            progress=None,
+        )
+
+    def test_agent_passes_style_recognition_provider_args(self) -> None:
+        with mock.patch("music_agent.agent.router.recognize_style", return_value={"provider": "essentia"}) as mocked:
+            result = route_request(
+                "识别这首歌的风格",
+                audio="song.wav",
+                audio_output_dir="outputs/style",
+                audio_recursive=True,
+                audio_keep_converted=True,
+                audio_ncm_converter="/opt/homebrew/bin/ncmdump",
+                style_provider="essentia",
+                style_essentia_model_type="discogs519_maest_30s",
+                style_essentia_embedding_model_path="embedding.pb",
+                style_essentia_classifier_model_path="classifier.pb",
+                style_essentia_metadata_path="metadata.json",
+                style_essentia_top_k=12,
+            )
+
+        self.assertEqual(result["routed_to"], "recognize_style")
+        self.assertEqual(result["result"]["provider"], "essentia")
+        mocked.assert_called_once_with(
+            "song.wav",
+            provider="essentia",
+            output_dir="outputs/style",
+            recursive=True,
+            keep_converted=True,
+            ncm_converter="/opt/homebrew/bin/ncmdump",
+            essentia_model_type="discogs519_maest_30s",
+            essentia_embedding_model_path="embedding.pb",
+            essentia_classifier_model_path="classifier.pb",
+            essentia_metadata_path="metadata.json",
+            essentia_top_k=12,
             progress=None,
         )
 

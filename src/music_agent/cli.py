@@ -17,10 +17,13 @@ from .capabilities import (
     separate_stems,
     slice_audio,
 )
+from .capabilities.analyze import ANALYSIS_PROVIDERS
 from .capabilities.convert_voice import PRESETS, VOICE_CONVERSION_PROVIDERS
+from .capabilities.recognize_style import STYLE_RECOGNITION_PROVIDERS
 from .errors import MusicAgentError
 from .generation import GENERATION_PROVIDERS
 from .separation import SUPPORTED_MODEL_TYPES
+from .style_recognition import ESSENTIA_STYLE_MODEL_TYPES
 from .voice_conversion import SVCFUSION_MODEL_TYPES
 
 
@@ -54,18 +57,36 @@ def build_parser() -> argparse.ArgumentParser:
 
     recognize = subparsers.add_parser("recognize-style", help="Recognize coarse music style.")
     recognize.add_argument("--audio", required=True, help="Input audio file or directory.")
+    recognize.add_argument(
+        "--provider",
+        default="auto",
+        choices=STYLE_RECOGNITION_PROVIDERS,
+        help="Style recognition backend. 'essentia' uses local Essentia TensorFlow models.",
+    )
     recognize.add_argument("--output-dir", help="Optional output directory.")
     recognize.add_argument("--recursive", action="store_true", help="Process input directories recursively.")
     recognize.add_argument("--keep-converted", action="store_true", help="Keep intermediate WAV files converted from ncm/mp3/flac inputs.")
     recognize.add_argument("--ncm-converter", help="Optional ncmdump-compatible executable or command template.")
+    recognize.add_argument("--essentia-model-type", choices=ESSENTIA_STYLE_MODEL_TYPES, help="Essentia style model type.")
+    recognize.add_argument("--essentia-embedding-model-path", help="Path to the Essentia embedding model .pb.")
+    recognize.add_argument("--essentia-classifier-model-path", help="Path to the Essentia genre/style classifier .pb.")
+    recognize.add_argument("--essentia-metadata-path", help="Path to the Essentia classifier metadata JSON.")
+    recognize.add_argument("--essentia-top-k", type=int, default=8, help="Number of style/tag predictions to return.")
     recognize.set_defaults(handler=_handle_recognize_style)
 
     analyze = subparsers.add_parser("analyze", help="Analyze audio metadata and loudness.")
     analyze.add_argument("--audio", required=True, help="Input audio file or directory.")
+    analyze.add_argument(
+        "--provider",
+        default="auto",
+        choices=ANALYSIS_PROVIDERS,
+        help="Analysis backend. 'essentia' extracts BPM, key, chords, sections, and MIR descriptors.",
+    )
     analyze.add_argument("--output-dir", help="Optional output directory.")
     analyze.add_argument("--recursive", action="store_true", help="Process input directories recursively.")
     analyze.add_argument("--keep-converted", action="store_true", help="Keep intermediate WAV files converted from ncm/mp3/flac inputs.")
     analyze.add_argument("--ncm-converter", help="Optional ncmdump-compatible executable or command template.")
+    analyze.add_argument("--essentia-max-sections", type=int, default=12, help="Maximum A/B/C structure sections for Essentia analysis.")
     analyze.set_defaults(handler=_handle_analyze)
 
     separate = subparsers.add_parser("separate-stems", help="Separate vocals/accompaniment.")
@@ -241,12 +262,30 @@ def build_parser() -> argparse.ArgumentParser:
     agent.add_argument("--audio-recursive", action="store_true", help="Recursively process directories for routed audio-input capabilities.")
     agent.add_argument("--audio-keep-converted", action="store_true", help="Keep converted WAV files for routed audio-input capabilities.")
     agent.add_argument("--ncm-converter", help="Optional ncmdump-compatible command for routed audio-input capabilities.")
+    agent.add_argument(
+        "--analysis-provider",
+        default="auto",
+        choices=ANALYSIS_PROVIDERS,
+        help="Analysis backend if the request routes to music analysis.",
+    )
+    agent.add_argument("--analysis-essentia-max-sections", type=int, default=12, help="Maximum A/B/C sections for Essentia analysis.")
     agent.add_argument("--slice-output-dir", help="Optional output directory if the request routes to audio slicing.")
     agent.add_argument("--slice-recursive", action="store_true", help="Recursively process directories for audio slicing.")
     agent.add_argument("--slice-min-length-ms", type=int, default=3000, help="Audio slicing minimum clip duration in milliseconds.")
     agent.add_argument("--slice-max-length-ms", type=int, default=10000, help="Audio slicing maximum clip duration in milliseconds.")
     agent.add_argument("--slice-keep-converted", action="store_true", help="Keep converted WAV files for audio slicing.")
     agent.add_argument("--slice-ncm-converter", help="Optional ncmdump-compatible command for NCM audio slicing.")
+    agent.add_argument(
+        "--style-provider",
+        default="auto",
+        choices=STYLE_RECOGNITION_PROVIDERS,
+        help="Style recognition backend if the request routes to style recognition.",
+    )
+    agent.add_argument("--style-essentia-model-type", choices=ESSENTIA_STYLE_MODEL_TYPES, help="Essentia style model type.")
+    agent.add_argument("--style-essentia-embedding-model-path", help="Path to the Essentia embedding model .pb.")
+    agent.add_argument("--style-essentia-classifier-model-path", help="Path to the Essentia genre/style classifier .pb.")
+    agent.add_argument("--style-essentia-metadata-path", help="Path to the Essentia classifier metadata JSON.")
+    agent.add_argument("--style-essentia-top-k", type=int, default=8, help="Number of style/tag predictions to return.")
     agent.add_argument("--curation-min-length-ms", type=int, default=3000, help="Vocal curation minimum valid slice duration in milliseconds.")
     agent.add_argument("--curation-max-length-ms", type=int, default=10000, help="Vocal curation maximum valid slice duration in milliseconds.")
     agent.add_argument("--curation-distance-threshold", type=float, default=0.32, help="Vocal curation clustering distance threshold.")
@@ -323,10 +362,16 @@ def _handle_generate(args: argparse.Namespace) -> dict[str, object]:
 def _handle_recognize_style(args: argparse.Namespace) -> dict[str, object]:
     return recognize_style(
         args.audio,
+        provider=args.provider,
         output_dir=args.output_dir,
         recursive=args.recursive,
         keep_converted=args.keep_converted,
         ncm_converter=args.ncm_converter,
+        essentia_model_type=args.essentia_model_type,
+        essentia_embedding_model_path=args.essentia_embedding_model_path,
+        essentia_classifier_model_path=args.essentia_classifier_model_path,
+        essentia_metadata_path=args.essentia_metadata_path,
+        essentia_top_k=args.essentia_top_k,
         progress=_print_progress,
     )
 
@@ -334,10 +379,12 @@ def _handle_recognize_style(args: argparse.Namespace) -> dict[str, object]:
 def _handle_analyze(args: argparse.Namespace) -> dict[str, object]:
     return analyze_audio(
         args.audio,
+        provider=args.provider,
         output_dir=args.output_dir,
         recursive=args.recursive,
         keep_converted=args.keep_converted,
         ncm_converter=args.ncm_converter,
+        essentia_max_sections=args.essentia_max_sections,
         progress=_print_progress,
     )
 
@@ -457,12 +504,20 @@ def _handle_agent(args: argparse.Namespace) -> dict[str, object]:
         audio_recursive=args.audio_recursive,
         audio_keep_converted=args.audio_keep_converted,
         audio_ncm_converter=args.ncm_converter,
+        analysis_provider=args.analysis_provider,
+        analysis_essentia_max_sections=args.analysis_essentia_max_sections,
         slice_output_dir=args.slice_output_dir,
         slice_recursive=args.slice_recursive,
         slice_min_length_ms=args.slice_min_length_ms,
         slice_max_length_ms=args.slice_max_length_ms,
         slice_keep_converted=args.slice_keep_converted,
         slice_ncm_converter=args.slice_ncm_converter,
+        style_provider=args.style_provider,
+        style_essentia_model_type=args.style_essentia_model_type,
+        style_essentia_embedding_model_path=args.style_essentia_embedding_model_path,
+        style_essentia_classifier_model_path=args.style_essentia_classifier_model_path,
+        style_essentia_metadata_path=args.style_essentia_metadata_path,
+        style_essentia_top_k=args.style_essentia_top_k,
         curation_min_length_ms=args.curation_min_length_ms,
         curation_max_length_ms=args.curation_max_length_ms,
         curation_distance_threshold=args.curation_distance_threshold,

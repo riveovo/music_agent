@@ -73,6 +73,50 @@ class CliTests(unittest.TestCase):
                 self.assertTrue(args.keep_converted)
                 self.assertEqual(args.ncm_converter, "/opt/homebrew/bin/ncmdump")
 
+    def test_analyze_accepts_essentia_args(self) -> None:
+        args = build_parser().parse_args(
+            [
+                "analyze",
+                "--audio",
+                "song.wav",
+                "--provider",
+                "essentia",
+                "--essentia-max-sections",
+                "10",
+            ]
+        )
+
+        self.assertEqual(args.provider, "essentia")
+        self.assertEqual(args.essentia_max_sections, 10)
+
+    def test_recognize_style_accepts_essentia_args(self) -> None:
+        args = build_parser().parse_args(
+            [
+                "recognize-style",
+                "--audio",
+                "song.wav",
+                "--provider",
+                "essentia",
+                "--essentia-model-type",
+                "discogs519_maest_30s",
+                "--essentia-embedding-model-path",
+                "embedding.pb",
+                "--essentia-classifier-model-path",
+                "classifier.pb",
+                "--essentia-metadata-path",
+                "metadata.json",
+                "--essentia-top-k",
+                "12",
+            ]
+        )
+
+        self.assertEqual(args.provider, "essentia")
+        self.assertEqual(args.essentia_model_type, "discogs519_maest_30s")
+        self.assertEqual(args.essentia_embedding_model_path, "embedding.pb")
+        self.assertEqual(args.essentia_classifier_model_path, "classifier.pb")
+        self.assertEqual(args.essentia_metadata_path, "metadata.json")
+        self.assertEqual(args.essentia_top_k, 12)
+
     def test_slice_audio_accepts_batch_and_conversion_args(self) -> None:
         args = build_parser().parse_args(
             [
@@ -255,3 +299,46 @@ class CliTests(unittest.TestCase):
         self.assertEqual(args.voice_svcfusion_model_path, "model.pt")
         self.assertEqual(args.voice_svcfusion_config_path, "config.yaml")
         self.assertEqual(args.voice_svcfusion_speaker, "target")
+
+    def test_agent_accepts_style_provider_args_without_colliding_with_generation_style(self) -> None:
+        args = build_parser().parse_args(
+            [
+                "agent",
+                "识别这首歌的风格",
+                "--audio",
+                "song.wav",
+                "--style",
+                "lofi",
+                "--style-provider",
+                "essentia",
+                "--style-essentia-embedding-model-path",
+                "embedding.pb",
+                "--style-essentia-classifier-model-path",
+                "classifier.pb",
+                "--style-essentia-metadata-path",
+                "metadata.json",
+            ]
+        )
+
+        self.assertEqual(args.style, "lofi")
+        self.assertEqual(args.style_provider, "essentia")
+        self.assertEqual(args.style_essentia_embedding_model_path, "embedding.pb")
+        self.assertEqual(args.style_essentia_classifier_model_path, "classifier.pb")
+        self.assertEqual(args.style_essentia_metadata_path, "metadata.json")
+
+    def test_agent_accepts_analysis_provider_args(self) -> None:
+        args = build_parser().parse_args(
+            [
+                "agent",
+                "分析这首歌",
+                "--audio",
+                "song.wav",
+                "--analysis-provider",
+                "essentia",
+                "--analysis-essentia-max-sections",
+                "9",
+            ]
+        )
+
+        self.assertEqual(args.analysis_provider, "essentia")
+        self.assertEqual(args.analysis_essentia_max_sections, 9)

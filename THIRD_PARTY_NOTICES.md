@@ -26,6 +26,22 @@ openvpi/audio-slicer.
 The OpenVPI MIT license text is included in
 `OPENVPI_AUDIO_SLICER_LICENSE.txt`.
 
+## Essentia Style Recognition Adapter
+
+This project includes adapters that can call externally provided Essentia
+libraries and TensorFlow music style models for local music analysis and
+genre/style recognition. No Essentia model weights are vendored into this
+repository.
+
+- Source project: https://essentia.upf.edu/
+- Upstream purpose: Audio analysis and music information retrieval.
+- Local analysis adapter file: `src/music_agent/music_analysis/essentia.py`
+- Local adapter file: `src/music_agent/style_recognition/essentia.py`
+- Essentia library license: GNU Affero General Public License v3.0, with
+  proprietary licensing available from the upstream project.
+- Common upstream model license: Creative Commons BY-NC-SA 4.0 unless a
+  different license is provided with the specific downloaded model.
+
 ## HuanLinOTO/SVCFusion Adapter
 
 This project includes an adapter that can call an externally provided

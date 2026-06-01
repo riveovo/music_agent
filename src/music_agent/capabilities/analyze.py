@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import os
 import re
 from typing import Callable
 
@@ -23,19 +24,27 @@ from ..audio_inputs import (
     require_audio_input,
 )
 from ..errors import MusicAgentError
+from ..music_analysis import ANALYSIS_PROVIDER_ENV, EssentiaAnalysisConfig, analyze_with_essentia
 from ..paths import ensure_output_dir, slugify, timestamp
+
+
+ANALYSIS_PROVIDERS = ("auto", "basic", "essentia")
 
 
 def analyze_audio(
     audio: str | Path,
     *,
+    provider: str = "auto",
     output_dir: str | Path | None = None,
     recursive: bool = False,
     keep_converted: bool = False,
     ncm_converter: str | None = None,
+    essentia_max_sections: int = 12,
     progress: Callable[[str], None] | None = None,
 ) -> dict[str, object]:
     """Analyze basic metadata and loudness for an audio file."""
+    resolved_provider = _resolve_provider(provider)
+    essentia_config = EssentiaAnalysisConfig(max_sections=essentia_max_sections)
     source = require_audio_input(audio)
     target_dir = Path(output_dir).expanduser() if output_dir else (
         default_batch_output_dir("analyze", source) if source.is_dir() else ensure_output_dir("analyze")
@@ -44,6 +53,8 @@ def analyze_audio(
         return _analyze_directory(
             source,
             target_dir,
+            provider=resolved_provider,
+            essentia_config=essentia_config,
             recursive=recursive,
             keep_converted=keep_converted,
             ncm_converter=ncm_converter,
@@ -53,6 +64,8 @@ def analyze_audio(
     return _analyze_single(
         source,
         target_dir,
+        provider=resolved_provider,
+        essentia_config=essentia_config,
         keep_converted=keep_converted,
         ncm_converter=ncm_converter,
         progress=progress,
@@ -63,6 +76,8 @@ def _analyze_directory(
     source_dir: Path,
     output_dir: Path,
     *,
+    provider: str,
+    essentia_config: EssentiaAnalysisConfig,
     recursive: bool,
     keep_converted: bool,
     ncm_converter: str | None,
@@ -83,6 +98,8 @@ def _analyze_directory(
                 _analyze_single(
                     audio_path,
                     output_dir,
+                    provider=provider,
+                    essentia_config=essentia_config,
                     keep_converted=keep_converted,
                     ncm_converter=ncm_converter,
                     progress=progress,
@@ -101,7 +118,7 @@ def _analyze_directory(
         results=results,
         failures=failures,
         skipped=skipped,
-        extra={"files_found": len(files)},
+        extra={"files_found": len(files), "provider": provider},
     )
     _report(progress, "Audio analysis batch: complete")
     return result
@@ -111,6 +128,8 @@ def _analyze_single(
     audio_path: Path,
     output_dir: Path,
     *,
+    provider: str,
+    essentia_config: EssentiaAnalysisConfig,
     keep_converted: bool,
     ncm_converter: str | None,
     progress: Callable[[str], None] | None,
@@ -126,6 +145,13 @@ def _analyze_single(
     ) as prepared:
         metadata = ffprobe_json(prepared.processing_audio)
         loudness = _measure_loudness(prepared.processing_audio)
+        essentia_output = None
+        if provider == "essentia":
+            essentia_output = analyze_with_essentia(
+                prepared.processing_audio,
+                config=essentia_config,
+                progress=progress,
+            )
 
     stream = first_audio_stream(metadata)
     fmt = metadata.get("format", {})
@@ -141,6 +167,8 @@ def _analyze_single(
     summary = _build_summary(duration, channels, sample_rate, codec, loudness)
     result = {
         "capability": "analyze",
+        "provider": provider,
+        "quality": "essentia_music_analysis" if provider == "essentia" else "basic_metadata",
         "audio": str(audio_path),
         "duration_seconds": round(duration, 3) if duration is not None else None,
         "codec": codec,
@@ -153,6 +181,23 @@ def _analyze_single(
         "conversion": prepared.conversion,
         "summary": summary,
     }
+    if essentia_output is not None:
+        result.update(
+            {
+                "tempo": essentia_output.tempo,
+                "meter": essentia_output.meter,
+                "tonal": essentia_output.tonal,
+                "chords": essentia_output.chords,
+                "spectral": essentia_output.spectral,
+                "sections": essentia_output.sections,
+                "descriptors": essentia_output.descriptors,
+                "extractor": {
+                    "name": "essentia_music_extractor",
+                    "version": essentia_output.extractor_version,
+                },
+                "summary": _build_musical_summary(summary, essentia_output),
+            }
+        )
 
     if write_result_json:
         result_path = output_dir / f"analysis_{slugify(audio_path.stem)}_{timestamp()}.json"
@@ -160,6 +205,16 @@ def _analyze_single(
         result["result_json"] = str(result_path)
         _report(progress, "Audio analysis: wrote result JSON")
     return result
+
+
+def _resolve_provider(provider: str) -> str:
+    if provider not in ANALYSIS_PROVIDERS:
+        available = ", ".join(ANALYSIS_PROVIDERS)
+        raise MusicAgentError(f"Unknown analysis provider '{provider}'. Available providers: {available}.")
+    if provider == "auto":
+        env_provider = os.getenv(ANALYSIS_PROVIDER_ENV)
+        return env_provider if env_provider in ("basic", "essentia") else "basic"
+    return provider
 
 
 def _measure_loudness(audio_path: Path) -> dict[str, float | None]:
@@ -235,6 +290,25 @@ def _build_summary(
         "fidelity": fidelity,
         "codec_note": f"encoded as {codec}",
     }
+
+
+def _build_musical_summary(
+    base: dict[str, str],
+    essentia_output: object,
+) -> dict[str, object]:
+    tempo = essentia_output.tempo
+    tonal = essentia_output.tonal
+    sections = essentia_output.sections
+    bpm = tempo.get("bpm") if isinstance(tempo, dict) else None
+    key = tonal.get("key") if isinstance(tonal, dict) else None
+    scale = tonal.get("scale") if isinstance(tonal, dict) else None
+    section_pattern = "-".join(str(section["label"]) for section in sections) if sections else None
+    musical = {
+        "tempo": f"{bpm} BPM" if bpm is not None else "unknown tempo",
+        "key": f"{key} {scale}".strip() if key else "unknown key",
+        "structure": section_pattern or "unknown structure",
+    }
+    return base | {"musical": musical}
 
 
 def _report(progress: Callable[[str], None] | None, message: str) -> None:

@@ -1,4 +1,4 @@
-"""Heuristic music style recognition capability."""
+"""Music style recognition capability."""
 
 from __future__ import annotations
 
@@ -8,9 +8,23 @@ from typing import Callable
 
 from .analyze import analyze_audio
 from ..audio import write_json
-from ..audio_inputs import default_batch_output_dir, discover_audio_files, make_batch_result, require_audio_input
+from ..audio_inputs import (
+    default_batch_output_dir,
+    discover_audio_files,
+    make_batch_result,
+    prepared_audio_file,
+    require_audio_input,
+)
 from ..errors import MusicAgentError
 from ..paths import ensure_output_dir, slugify, timestamp
+from ..style_recognition import (
+    EssentiaStyleConfig,
+    has_complete_essentia_style_env,
+    infer_energy_from_tags,
+    mood_for_style_and_tags,
+    recognize_style_with_essentia,
+    resolve_essentia_style_config,
+)
 
 
 STYLE_KEYWORDS = {
@@ -21,18 +35,49 @@ STYLE_KEYWORDS = {
     "ambient": ("ambient", "space", "冥想", "氛围"),
     "pop": ("pop", "流行"),
 }
+STYLE_RECOGNITION_PROVIDERS = ("auto", "heuristic", "essentia")
 
 
 def recognize_style(
     audio: str | Path,
     *,
+    provider: str = "auto",
     output_dir: str | Path | None = None,
     recursive: bool = False,
     keep_converted: bool = False,
     ncm_converter: str | None = None,
+    essentia_model_type: str | None = None,
+    essentia_embedding_model_path: str | Path | None = None,
+    essentia_classifier_model_path: str | Path | None = None,
+    essentia_metadata_path: str | Path | None = None,
+    essentia_top_k: int = 8,
+    essentia_segment_seconds: float = 30.0,
+    essentia_max_segments: int = 5,
     progress: Callable[[str], None] | None = None,
 ) -> dict[str, object]:
-    """Infer a coarse style label from file hints and basic audio metadata."""
+    """Infer a music style label from audio."""
+    explicit_essentia_args = any(
+        value is not None
+        for value in (
+            essentia_model_type,
+            essentia_embedding_model_path,
+            essentia_classifier_model_path,
+            essentia_metadata_path,
+        )
+    )
+    resolved_provider = _resolve_provider(provider, explicit_essentia_args=explicit_essentia_args)
+    essentia_config: EssentiaStyleConfig | None = None
+    if resolved_provider == "essentia":
+        essentia_config = resolve_essentia_style_config(
+            model_type=essentia_model_type,
+            embedding_model_path=essentia_embedding_model_path,
+            classifier_model_path=essentia_classifier_model_path,
+            metadata_path=essentia_metadata_path,
+            top_k=essentia_top_k,
+            segment_seconds=essentia_segment_seconds,
+            max_segments=essentia_max_segments,
+        )
+
     source = require_audio_input(audio)
     target_dir = Path(output_dir).expanduser() if output_dir else (
         default_batch_output_dir("recognize_style", source) if source.is_dir() else ensure_output_dir("recognize_style")
@@ -41,6 +86,8 @@ def recognize_style(
         return _recognize_directory(
             source,
             target_dir,
+            provider=resolved_provider,
+            essentia_config=essentia_config,
             recursive=recursive,
             keep_converted=keep_converted,
             ncm_converter=ncm_converter,
@@ -49,6 +96,8 @@ def recognize_style(
     return _recognize_single(
         source,
         target_dir,
+        provider=resolved_provider,
+        essentia_config=essentia_config,
         keep_converted=keep_converted,
         ncm_converter=ncm_converter,
         progress=progress,
@@ -59,6 +108,8 @@ def _recognize_directory(
     source_dir: Path,
     output_dir: Path,
     *,
+    provider: str,
+    essentia_config: EssentiaStyleConfig | None,
     recursive: bool,
     keep_converted: bool,
     ncm_converter: str | None,
@@ -79,6 +130,8 @@ def _recognize_directory(
                 _recognize_single(
                     audio_path,
                     output_dir,
+                    provider=provider,
+                    essentia_config=essentia_config,
                     keep_converted=keep_converted,
                     ncm_converter=ncm_converter,
                     progress=progress,
@@ -97,7 +150,7 @@ def _recognize_directory(
         results=results,
         failures=failures,
         skipped=skipped,
-        extra={"files_found": len(files)},
+        extra={"files_found": len(files), "provider": provider},
     )
     _report(progress, "Style recognition batch: complete")
     return result
@@ -107,6 +160,8 @@ def _recognize_single(
     audio_path: Path,
     output_dir: Path,
     *,
+    provider: str,
+    essentia_config: EssentiaStyleConfig | None,
     keep_converted: bool,
     ncm_converter: str | None,
     progress: Callable[[str], None] | None,
@@ -125,30 +180,72 @@ def _recognize_single(
     loudness = analysis.get("loudness", {})
     mean_db = loudness.get("mean_db") if isinstance(loudness, dict) else None
 
-    sidecar_style = _style_from_sidecar(audio_path)
-    filename_style = _style_from_name(stem)
-    style = sidecar_style or filename_style or _style_from_audio(analysis)
-    energy = _energy_from_loudness(mean_db)
-    mood = _mood_for(style, energy)
-    confidence = _confidence(style, stem, mean_db)
+    if provider == "essentia":
+        if essentia_config is None:
+            raise MusicAgentError("Internal error: missing Essentia style config.")
+        with prepared_audio_file(
+            audio_path,
+            output_dir=output_dir,
+            keep_converted=keep_converted,
+            ncm_converter=ncm_converter,
+            progress=progress,
+        ) as prepared:
+            style_output = recognize_style_with_essentia(
+                prepared.processing_audio,
+                essentia_config,
+                progress=progress,
+            )
+        style = style_output.style
+        confidence = style_output.confidence
+        energy = infer_energy_from_tags(style_output.raw_tags, confidence)
+        mood = mood_for_style_and_tags(style, style_output.raw_tags, energy)
+        quality = "essentia_discogs_maest"
+        provider_metadata: dict[str, object] = {
+            "top_styles": style_output.top_styles,
+            "raw_tags": style_output.raw_tags,
+            "model": {
+                "type": style_output.model_type,
+                "embedding_model_path": str(style_output.embedding_model_path),
+                "classifier_model_path": str(style_output.classifier_model_path),
+                "metadata_path": str(style_output.metadata_path),
+                "labels_count": style_output.labels_count,
+            },
+            "evidence": {
+                "segments_analyzed": style_output.segments,
+                "duration_seconds": analysis.get("duration_seconds"),
+                "channels": analysis.get("channels"),
+                "mean_db": mean_db,
+            },
+        }
+    else:
+        sidecar_style = _style_from_sidecar(audio_path)
+        filename_style = _style_from_name(stem)
+        style = sidecar_style or filename_style or _style_from_audio(analysis)
+        energy = _energy_from_loudness(mean_db)
+        mood = _mood_for(style, energy)
+        confidence = _confidence(style, stem, mean_db)
+        quality = "heuristic_mvp"
+        provider_metadata = {
+            "evidence": {
+                "sidecar_hint": sidecar_style,
+                "filename_hint": filename_style,
+                "duration_seconds": analysis.get("duration_seconds"),
+                "channels": analysis.get("channels"),
+                "mean_db": mean_db,
+            }
+        }
 
     result = {
         "capability": "recognize_style",
+        "provider": provider,
         "audio": str(audio_path),
         "style": style,
         "mood": mood,
         "energy": energy,
         "confidence": confidence,
-        "quality": "heuristic_mvp",
-        "evidence": {
-            "sidecar_hint": sidecar_style,
-            "filename_hint": filename_style,
-            "duration_seconds": analysis.get("duration_seconds"),
-            "channels": analysis.get("channels"),
-            "mean_db": mean_db,
-        },
+        "quality": quality,
         "conversion": analysis.get("conversion"),
-    }
+    } | provider_metadata
 
     if write_result_json:
         result_path = output_dir / f"style_{slugify(audio_path.stem)}_{timestamp()}.json"
@@ -156,6 +253,15 @@ def _recognize_single(
         result["result_json"] = str(result_path)
         _report(progress, "Style recognition: wrote result JSON")
     return result
+
+
+def _resolve_provider(provider: str, *, explicit_essentia_args: bool) -> str:
+    if provider not in STYLE_RECOGNITION_PROVIDERS:
+        available = ", ".join(STYLE_RECOGNITION_PROVIDERS)
+        raise MusicAgentError(f"Unknown style recognition provider '{provider}'. Available providers: {available}.")
+    if provider == "auto":
+        return "essentia" if explicit_essentia_args or has_complete_essentia_style_env() else "heuristic"
+    return provider
 
 
 def _style_from_name(stem: str) -> str | None:

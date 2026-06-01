@@ -58,12 +58,20 @@ def route_request(
     audio_recursive: bool = False,
     audio_keep_converted: bool = False,
     audio_ncm_converter: str | None = None,
+    analysis_provider: str = "auto",
+    analysis_essentia_max_sections: int = 12,
     slice_output_dir: str | Path | None = None,
     slice_recursive: bool = False,
     slice_min_length_ms: int = 3000,
     slice_max_length_ms: int = 10000,
     slice_keep_converted: bool = False,
     slice_ncm_converter: str | None = None,
+    style_provider: str = "auto",
+    style_essentia_model_type: str | None = None,
+    style_essentia_embedding_model_path: str | Path | None = None,
+    style_essentia_classifier_model_path: str | Path | None = None,
+    style_essentia_metadata_path: str | Path | None = None,
+    style_essentia_top_k: int = 8,
     curation_min_length_ms: int = 3000,
     curation_max_length_ms: int = 10000,
     curation_distance_threshold: float = 0.32,
@@ -106,19 +114,27 @@ def route_request(
     elif route == "recognize_style":
         result = recognize_style(
             _require_audio_for_route(audio, route),
+            provider=style_provider,
             output_dir=audio_output_dir,
             recursive=audio_recursive,
             keep_converted=audio_keep_converted,
             ncm_converter=audio_ncm_converter,
+            essentia_model_type=style_essentia_model_type,
+            essentia_embedding_model_path=style_essentia_embedding_model_path,
+            essentia_classifier_model_path=style_essentia_classifier_model_path,
+            essentia_metadata_path=style_essentia_metadata_path,
+            essentia_top_k=style_essentia_top_k,
             progress=progress,
         )
     elif route == "analyze":
         result = analyze_audio(
             _require_audio_for_route(audio, route),
+            provider=analysis_provider,
             output_dir=audio_output_dir,
             recursive=audio_recursive,
             keep_converted=audio_keep_converted,
             ncm_converter=audio_ncm_converter,
+            essentia_max_sections=analysis_essentia_max_sections,
             progress=progress,
         )
     elif route == "separate_stems":

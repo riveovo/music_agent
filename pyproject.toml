@@ -18,6 +18,10 @@ audio-slice = [
     "numpy>=1.26",
     "soundfile>=0.12",
 ]
+analysis-essentia = [
+    "essentia",
+    "numpy>=1.26",
+]
 musicgen-local = [
     "accelerate>=0.28",
     "scipy>=1.12",
@@ -37,6 +41,10 @@ separation-msst = [
     "soundfile>=0.12",
     "torch>=2.2",
     "tqdm>=4.66",
+]
+style-essentia = [
+    "essentia-tensorflow",
+    "numpy>=1.26",
 ]
 vocal-curation = [
     "numpy>=1.26",

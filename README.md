@@ -101,6 +101,114 @@ Notes:
 - The model provider is free to run locally, but you are responsible for model
   license terms before commercial use.
 
+## Real Music Analysis
+
+The default `analyze --provider auto` keeps the lightweight metadata/loudness
+analysis. Use `--provider essentia` for real MIR descriptors such as BPM, beat
+positions, key/scale, chord histogram/progression, spectral features, and A/B/C
+structure sections.
+
+Install the optional Essentia analysis stack:
+
+```bash
+python3.12 -m pip install -e ".[analysis-essentia]"
+```
+
+Then run:
+
+```bash
+PYTHONPATH=src python3.12 -m music_agent.cli analyze \
+  --audio song.wav \
+  --provider essentia \
+  --essentia-max-sections 12
+```
+
+Batch processing and MP3/FLAC/NCM conversion use the shared audio-input
+behavior:
+
+```bash
+PYTHONPATH=src python3.12 -m music_agent.cli analyze \
+  --audio datasets/raw_songs \
+  --output-dir outputs/analysis/batch_001 \
+  --recursive \
+  --provider essentia
+```
+
+The `sections` output uses A/B/C labels for repeated musical material. These
+are structural labels, not guaranteed verse/chorus names. The JSON keeps a weak
+`interpretation` field, but the stable contract is the section timestamp and
+letter label.
+
+You can make `auto` choose Essentia by setting:
+
+```bash
+export MUSIC_AGENT_ANALYSIS_PROVIDER=essentia
+```
+
+Essentia is AGPL-3.0, with proprietary licensing available from upstream.
+
+## Real Music Style Recognition
+
+The default `recognize-style --provider auto` uses the Essentia backend only
+when a complete model configuration is provided. Otherwise it falls back to the
+lightweight heuristic recognizer.
+
+Install the optional Essentia TensorFlow stack:
+
+```bash
+python3.12 -m pip install -e ".[style-essentia]"
+```
+
+Download the Essentia model files into `models/style/essentia/`:
+
+- Embedding model: `discogs-maest-30s-pw-519l-2.pb`
+- Classification head: `genre_discogs519-discogs-maest-30s-pw-519l-1.pb`
+- Metadata: `genre_discogs519-discogs-maest-30s-pw-519l-1.json`
+
+Then run:
+
+```bash
+PYTHONPATH=src python3.12 -m music_agent.cli recognize-style \
+  --audio song.wav \
+  --provider essentia \
+  --essentia-model-type discogs519_maest_30s \
+  --essentia-embedding-model-path models/style/essentia/discogs-maest-30s-pw-519l-2.pb \
+  --essentia-classifier-model-path models/style/essentia/genre_discogs519-discogs-maest-30s-pw-519l-1.pb \
+  --essentia-metadata-path models/style/essentia/genre_discogs519-discogs-maest-30s-pw-519l-1.json
+```
+
+Batch processing and MP3/FLAC/NCM conversion use the shared audio-input
+behavior:
+
+```bash
+PYTHONPATH=src python3.12 -m music_agent.cli recognize-style \
+  --audio datasets/raw_songs \
+  --output-dir outputs/style/batch_001 \
+  --recursive \
+  --provider essentia \
+  --essentia-embedding-model-path models/style/essentia/discogs-maest-30s-pw-519l-2.pb \
+  --essentia-classifier-model-path models/style/essentia/genre_discogs519-discogs-maest-30s-pw-519l-1.pb \
+  --essentia-metadata-path models/style/essentia/genre_discogs519-discogs-maest-30s-pw-519l-1.json
+```
+
+You can also set:
+
+```bash
+export MUSIC_AGENT_STYLE_ESSENTIA_MODEL_TYPE=discogs519_maest_30s
+export MUSIC_AGENT_STYLE_ESSENTIA_EMBEDDING_MODEL_PATH=models/style/essentia/discogs-maest-30s-pw-519l-2.pb
+export MUSIC_AGENT_STYLE_ESSENTIA_CLASSIFIER_MODEL_PATH=models/style/essentia/genre_discogs519-discogs-maest-30s-pw-519l-1.pb
+export MUSIC_AGENT_STYLE_ESSENTIA_METADATA_PATH=models/style/essentia/genre_discogs519-discogs-maest-30s-pw-519l-1.json
+```
+
+The Essentia backend analyzes several internal 30-second windows, aggregates
+the predictions, and writes normalized `style`, `top_styles`, raw Discogs tags,
+window evidence, and confidence to JSON. The internal windows are not written
+to disk and are separate from the dataset-oriented `slice-audio` command.
+
+Essentia is AGPL-3.0, and the commonly used MTG TensorFlow models are
+non-commercial Creative Commons unless you obtain a separate license. Check the
+specific model metadata before commercial use.
+
 ## Real Vocal/Accompaniment Separation
 
 The default `separate-stems --provider auto` uses the MSST-compatible backend
