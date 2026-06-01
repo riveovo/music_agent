@@ -1,0 +1,257 @@
+import sys
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+SRC = ROOT / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
+
+from music_agent.cli import build_parser
+
+
+class CliTests(unittest.TestCase):
+    def test_curate_vocal_slices_accepts_args(self) -> None:
+        args = build_parser().parse_args(
+            [
+                "curate-vocal-slices",
+                "--input",
+                "outputs/slices/singer",
+                "--output-dir",
+                "datasets/curated/singer",
+                "--recursive",
+                "--min-length-ms",
+                "3000",
+                "--max-length-ms",
+                "10000",
+                "--distance-threshold",
+                "0.28",
+                "--embedding-model",
+                "speechbrain/spkrec-ecapa-voxceleb",
+                "--model-cache-dir",
+                "models/speechbrain/cache",
+                "--device",
+                "cpu",
+                "--keep-converted",
+                "--ncm-converter",
+                "/opt/homebrew/bin/ncmdump",
+            ]
+        )
+
+        self.assertEqual(args.input, "outputs/slices/singer")
+        self.assertEqual(args.output_dir, "datasets/curated/singer")
+        self.assertTrue(args.recursive)
+        self.assertEqual(args.min_length_ms, 3000)
+        self.assertEqual(args.max_length_ms, 10000)
+        self.assertEqual(args.distance_threshold, 0.28)
+        self.assertEqual(args.embedding_model, "speechbrain/spkrec-ecapa-voxceleb")
+        self.assertEqual(args.model_cache_dir, "models/speechbrain/cache")
+        self.assertEqual(args.device, "cpu")
+        self.assertTrue(args.keep_converted)
+        self.assertEqual(args.ncm_converter, "/opt/homebrew/bin/ncmdump")
+
+    def test_audio_input_commands_accept_batch_conversion_args(self) -> None:
+        for command in ("analyze", "recognize-style", "separate-stems", "convert-voice"):
+            with self.subTest(command=command):
+                args = build_parser().parse_args(
+                    [
+                        command,
+                        "--audio",
+                        "datasets/raw",
+                        "--output-dir",
+                        "outputs/batch",
+                        "--recursive",
+                        "--keep-converted",
+                        "--ncm-converter",
+                        "/opt/homebrew/bin/ncmdump",
+                    ]
+                )
+
+                self.assertEqual(args.audio, "datasets/raw")
+                self.assertEqual(args.output_dir, "outputs/batch")
+                self.assertTrue(args.recursive)
+                self.assertTrue(args.keep_converted)
+                self.assertEqual(args.ncm_converter, "/opt/homebrew/bin/ncmdump")
+
+    def test_slice_audio_accepts_batch_and_conversion_args(self) -> None:
+        args = build_parser().parse_args(
+            [
+                "slice-audio",
+                "--input",
+                "datasets/raw",
+                "--output-dir",
+                "outputs/slices",
+                "--recursive",
+                "--min-length-ms",
+                "3000",
+                "--max-length-ms",
+                "10000",
+                "--keep-converted",
+                "--ncm-converter",
+                "/opt/homebrew/bin/ncmdump",
+            ]
+        )
+
+        self.assertEqual(args.input, "datasets/raw")
+        self.assertEqual(args.output_dir, "outputs/slices")
+        self.assertTrue(args.recursive)
+        self.assertEqual(args.min_length_ms, 3000)
+        self.assertEqual(args.max_length_ms, 10000)
+        self.assertTrue(args.keep_converted)
+        self.assertEqual(args.ncm_converter, "/opt/homebrew/bin/ncmdump")
+
+    def test_separate_stems_accepts_msst_args(self) -> None:
+        args = build_parser().parse_args(
+            [
+                "separate-stems",
+                "--audio",
+                "song.wav",
+                "--provider",
+                "msst",
+                "--model-type",
+                "bs_roformer",
+                "--model-path",
+                "model.ckpt",
+                "--config-path",
+                "model.yaml",
+                "--device",
+                "cpu",
+                "--use-tta",
+                "--instrumental-model-type",
+                "mel_band_roformer",
+                "--instrumental-model-path",
+                "inst.ckpt",
+                "--instrumental-config-path",
+                "inst.yaml",
+                "--deharmony-model-type",
+                "mel_band_roformer",
+                "--deharmony-model-path",
+                "deharmony.ckpt",
+                "--deharmony-config-path",
+                "deharmony.yaml",
+                "--dereverb-model-type",
+                "mel_band_roformer",
+                "--dereverb-model-path",
+                "dereverb.ckpt",
+                "--dereverb-config-path",
+                "dereverb.yaml",
+            ]
+        )
+
+        self.assertEqual(args.provider, "msst")
+        self.assertEqual(args.model_type, "bs_roformer")
+        self.assertEqual(args.model_path, "model.ckpt")
+        self.assertEqual(args.config_path, "model.yaml")
+        self.assertEqual(args.device, "cpu")
+        self.assertTrue(args.use_tta)
+        self.assertEqual(args.instrumental_model_type, "mel_band_roformer")
+        self.assertEqual(args.instrumental_model_path, "inst.ckpt")
+        self.assertEqual(args.instrumental_config_path, "inst.yaml")
+        self.assertEqual(args.deharmony_model_type, "mel_band_roformer")
+        self.assertEqual(args.deharmony_model_path, "deharmony.ckpt")
+        self.assertEqual(args.deharmony_config_path, "deharmony.yaml")
+        self.assertEqual(args.dereverb_model_type, "mel_band_roformer")
+        self.assertEqual(args.dereverb_model_path, "dereverb.ckpt")
+        self.assertEqual(args.dereverb_config_path, "dereverb.yaml")
+
+    def test_convert_voice_accepts_svcfusion_args(self) -> None:
+        args = build_parser().parse_args(
+            [
+                "convert-voice",
+                "--audio",
+                "vocals.wav",
+                "--provider",
+                "svcfusion",
+                "--output",
+                "converted.wav",
+                "--svcfusion-model-type",
+                "ddsp6_1",
+                "--svcfusion-model-path",
+                "model.pt",
+                "--svcfusion-config-path",
+                "config.yaml",
+                "--svcfusion-speaker",
+                "target",
+                "--svcfusion-device",
+                "cpu",
+                "--svcfusion-source-path",
+                "/repo/SVCFusion",
+                "--svcfusion-f0-method",
+                "rmvpe",
+                "--svcfusion-key-change",
+                "2",
+                "--svcfusion-formant-shift-key",
+                "1",
+                "--svcfusion-threshold",
+                "-55",
+            ]
+        )
+
+        self.assertEqual(args.provider, "svcfusion")
+        self.assertEqual(args.svcfusion_model_type, "ddsp6_1")
+        self.assertEqual(args.svcfusion_model_path, "model.pt")
+        self.assertEqual(args.svcfusion_config_path, "config.yaml")
+        self.assertEqual(args.svcfusion_speaker, "target")
+        self.assertEqual(args.svcfusion_device, "cpu")
+        self.assertEqual(args.svcfusion_source_path, "/repo/SVCFusion")
+        self.assertEqual(args.svcfusion_key_change, 2.0)
+        self.assertEqual(args.svcfusion_formant_shift_key, 1.0)
+        self.assertEqual(args.svcfusion_threshold, -55.0)
+
+    def test_agent_accepts_separation_args_without_colliding_with_generation_provider(self) -> None:
+        args = build_parser().parse_args(
+            [
+                "agent",
+                "分离人声",
+                "--audio",
+                "song.wav",
+                "--provider",
+                "synth",
+                "--separation-provider",
+                "msst",
+                "--separation-model-type",
+                "mel_band_roformer",
+                "--separation-model-path",
+                "model.ckpt",
+                "--separation-config-path",
+                "model.yaml",
+                "--separation-deharmony-model-path",
+                "deharmony.ckpt",
+                "--separation-deharmony-config-path",
+                "deharmony.yaml",
+            ]
+        )
+
+        self.assertEqual(args.provider, "synth")
+        self.assertEqual(args.separation_provider, "msst")
+        self.assertEqual(args.separation_model_type, "mel_band_roformer")
+        self.assertEqual(args.separation_model_path, "model.ckpt")
+        self.assertEqual(args.separation_config_path, "model.yaml")
+        self.assertEqual(args.separation_deharmony_model_path, "deharmony.ckpt")
+        self.assertEqual(args.separation_deharmony_config_path, "deharmony.yaml")
+
+    def test_agent_accepts_voice_provider_args_without_colliding_with_generation_provider(self) -> None:
+        args = build_parser().parse_args(
+            [
+                "agent",
+                "把这段人声换成目标音色",
+                "--audio",
+                "vocals.wav",
+                "--provider",
+                "synth",
+                "--voice-provider",
+                "svcfusion",
+                "--voice-svcfusion-model-path",
+                "model.pt",
+                "--voice-svcfusion-config-path",
+                "config.yaml",
+                "--voice-svcfusion-speaker",
+                "target",
+            ]
+        )
+
+        self.assertEqual(args.provider, "synth")
+        self.assertEqual(args.voice_provider, "svcfusion")
+        self.assertEqual(args.voice_svcfusion_model_path, "model.pt")
+        self.assertEqual(args.voice_svcfusion_config_path, "config.yaml")
+        self.assertEqual(args.voice_svcfusion_speaker, "target")

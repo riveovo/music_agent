@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Callable
 
 from .analyze import analyze_audio
 from ..audio import write_json
+from ..audio_inputs import default_batch_output_dir, discover_audio_files, make_batch_result, require_audio_input
+from ..errors import MusicAgentError
 from ..paths import ensure_output_dir, slugify, timestamp
 
 
@@ -20,9 +23,103 @@ STYLE_KEYWORDS = {
 }
 
 
-def recognize_style(audio: str | Path) -> dict[str, object]:
+def recognize_style(
+    audio: str | Path,
+    *,
+    output_dir: str | Path | None = None,
+    recursive: bool = False,
+    keep_converted: bool = False,
+    ncm_converter: str | None = None,
+    progress: Callable[[str], None] | None = None,
+) -> dict[str, object]:
     """Infer a coarse style label from file hints and basic audio metadata."""
-    analysis = analyze_audio(audio)
+    source = require_audio_input(audio)
+    target_dir = Path(output_dir).expanduser() if output_dir else (
+        default_batch_output_dir("recognize_style", source) if source.is_dir() else ensure_output_dir("recognize_style")
+    )
+    if source.is_dir():
+        return _recognize_directory(
+            source,
+            target_dir,
+            recursive=recursive,
+            keep_converted=keep_converted,
+            ncm_converter=ncm_converter,
+            progress=progress,
+        )
+    return _recognize_single(
+        source,
+        target_dir,
+        keep_converted=keep_converted,
+        ncm_converter=ncm_converter,
+        progress=progress,
+    )
+
+
+def _recognize_directory(
+    source_dir: Path,
+    output_dir: Path,
+    *,
+    recursive: bool,
+    keep_converted: bool,
+    ncm_converter: str | None,
+    progress: Callable[[str], None] | None,
+) -> dict[str, object]:
+    files, skipped = discover_audio_files(source_dir, recursive=recursive)
+    if not files:
+        raise MusicAgentError(f"No supported audio files found in directory: {source_dir}")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    _report(progress, f"Style recognition batch: found {len(files)} file(s)")
+    results: list[dict[str, object]] = []
+    failures: list[dict[str, str]] = []
+    for index, audio_path in enumerate(files, start=1):
+        rel_path = audio_path.relative_to(source_dir)
+        _report(progress, f"Style recognition batch: [{index}/{len(files)}] {rel_path}")
+        try:
+            results.append(
+                _recognize_single(
+                    audio_path,
+                    output_dir,
+                    keep_converted=keep_converted,
+                    ncm_converter=ncm_converter,
+                    progress=progress,
+                    write_result_json=False,
+                )
+            )
+        except MusicAgentError as exc:
+            failures.append({"audio": str(audio_path), "error": str(exc)})
+            _report(progress, f"Style recognition batch: failed {rel_path}: {exc}")
+
+    result = make_batch_result(
+        capability="recognize_style",
+        input_path=source_dir,
+        output_dir=output_dir,
+        recursive=recursive,
+        results=results,
+        failures=failures,
+        skipped=skipped,
+        extra={"files_found": len(files)},
+    )
+    _report(progress, "Style recognition batch: complete")
+    return result
+
+
+def _recognize_single(
+    audio_path: Path,
+    output_dir: Path,
+    *,
+    keep_converted: bool,
+    ncm_converter: str | None,
+    progress: Callable[[str], None] | None,
+    write_result_json: bool = True,
+) -> dict[str, object]:
+    _report(progress, f"Style recognition: preparing {audio_path.name}")
+    analysis = analyze_audio(
+        audio_path,
+        output_dir=output_dir,
+        keep_converted=keep_converted,
+        ncm_converter=ncm_converter,
+        progress=progress,
+    )
     audio_path = Path(str(analysis["audio"]))
     stem = audio_path.stem.lower()
     loudness = analysis.get("loudness", {})
@@ -50,12 +147,14 @@ def recognize_style(audio: str | Path) -> dict[str, object]:
             "channels": analysis.get("channels"),
             "mean_db": mean_db,
         },
+        "conversion": analysis.get("conversion"),
     }
 
-    output_dir = ensure_output_dir("recognize_style")
-    result_path = output_dir / f"style_{slugify(audio_path.stem)}_{timestamp()}.json"
-    write_json(result_path, result | {"result_json": str(result_path)})
-    result["result_json"] = str(result_path)
+    if write_result_json:
+        result_path = output_dir / f"style_{slugify(audio_path.stem)}_{timestamp()}.json"
+        write_json(result_path, result | {"result_json": str(result_path)})
+        result["result_json"] = str(result_path)
+        _report(progress, "Style recognition: wrote result JSON")
     return result
 
 
@@ -124,3 +223,8 @@ def _confidence(style: str, stem: str, mean_db: object) -> float:
     if isinstance(mean_db, (int, float)):
         score += 0.08
     return round(min(score, 0.78), 2)
+
+
+def _report(progress: Callable[[str], None] | None, message: str) -> None:
+    if progress is not None:
+        progress(message)
