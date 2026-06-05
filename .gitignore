@@ -6,3 +6,5 @@ __pycache__/
 outputs/
 datasets/
 models/
+web/node_modules/
+web/dist/

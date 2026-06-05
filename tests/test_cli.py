@@ -1,13 +1,15 @@
 import sys
 import unittest
 from pathlib import Path
+from io import StringIO
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from music_agent.cli import build_parser
+from music_agent.cli import _handle_chat, build_parser
 
 
 class CliTests(unittest.TestCase):
@@ -342,3 +344,93 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual(args.analysis_provider, "essentia")
         self.assertEqual(args.analysis_essentia_max_sections, 9)
+
+    def test_agent_accepts_react_engine_args(self) -> None:
+        args = build_parser().parse_args(
+            [
+                "agent",
+                "生成一段音乐",
+                "--agent-engine",
+                "openai",
+                "--openai-model",
+                "gpt-test",
+                "--skills-path",
+                ".agents/skills",
+                "--tools-path",
+                ".agents/tools",
+                "--max-steps",
+                "4",
+            ]
+        )
+
+        self.assertEqual(args.agent_engine, "openai")
+        self.assertEqual(args.openai_model, "gpt-test")
+        self.assertEqual(args.skills_path, ".agents/skills")
+        self.assertEqual(args.tools_path, ".agents/tools")
+        self.assertEqual(args.max_steps, 4)
+
+    def test_chat_accepts_interactive_session_args(self) -> None:
+        args = build_parser().parse_args(
+            [
+                "chat",
+                "--agent-engine",
+                "keyword",
+                "--audio",
+                "song.wav",
+                "--analysis-provider",
+                "essentia",
+                "--max-steps",
+                "3",
+            ]
+        )
+
+        self.assertEqual(args.agent_engine, "keyword")
+        self.assertEqual(args.audio, "song.wav")
+        self.assertEqual(args.analysis_provider, "essentia")
+        self.assertEqual(args.max_steps, 3)
+
+    def test_web_accepts_service_and_agent_defaults(self) -> None:
+        args = build_parser().parse_args(
+            [
+                "web",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                "8765",
+                "--agent-engine",
+                "keyword",
+                "--openai-model",
+                "gpt-test",
+                "--skills-path",
+                ".agents/skills",
+                "--tools-path",
+                ".agents/tools",
+                "--max-steps",
+                "5",
+                "--audio",
+                "song.wav",
+            ]
+        )
+
+        self.assertEqual(args.host, "127.0.0.1")
+        self.assertEqual(args.port, 8765)
+        self.assertEqual(args.agent_engine, "keyword")
+        self.assertEqual(args.openai_model, "gpt-test")
+        self.assertEqual(args.skills_path, ".agents/skills")
+        self.assertEqual(args.tools_path, ".agents/tools")
+        self.assertEqual(args.max_steps, 5)
+        self.assertEqual(args.audio, "song.wav")
+
+    def test_chat_keyword_session_reads_multiple_turns(self) -> None:
+        args = build_parser().parse_args(["chat", "--agent-engine", "keyword", "--audio", "song.wav"])
+
+        with mock.patch("sys.stdin", StringIO("分析这首歌\n/exit\n")):
+            with mock.patch("sys.stdout", StringIO()):
+                with mock.patch("sys.stderr", StringIO()):
+                    with mock.patch("music_agent.cli.route_request", return_value={"engine": "keyword"}) as mocked:
+                        result = _handle_chat(args)
+
+        self.assertEqual(result["capability"], "chat")
+        self.assertEqual(result["engine"], "keyword")
+        self.assertEqual(result["turns"], 1)
+        mocked.assert_called_once()

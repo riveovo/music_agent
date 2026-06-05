@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "music-agent"
 version = "0.1.0"
-description = "CLI-first MVP for an AI music agent with independent music capabilities."
+description = "CLI and ReAct agent toolkit for independent AI music capabilities."
 requires-python = ">=3.12"
 dependencies = []
 
@@ -14,6 +14,16 @@ music-agent = "music_agent.cli:main"
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
+agent-openai = [
+    "openai>=2.0.0",
+    "pydantic>=2.6",
+]
+web = [
+    "fastapi>=0.115",
+    "httpx2>=0.28",
+    "python-multipart>=0.0.9",
+    "uvicorn[standard]>=0.30",
+]
 audio-slice = [
     "numpy>=1.26",
     "soundfile>=0.12",
@@ -91,6 +101,7 @@ license-files = ["MSST_AGPL_LICENSE.txt", "OPENVPI_AUDIO_SLICER_LICENSE.txt", "T
 
 [tool.setuptools.package-data]
 "music_agent.separation.msst_roformer" = ["NOTICE.md"]
+"music_agent.skills" = ["builtin/*/SKILL.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

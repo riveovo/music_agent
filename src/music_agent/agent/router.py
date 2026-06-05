@@ -1,4 +1,4 @@
-"""Simple natural-language router for the CLI MVP."""
+"""Natural-language agent orchestration with OpenAI ReAct and keyword fallback."""
 
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ from ..capabilities import (
     slice_audio,
 )
 from ..errors import MusicAgentError
+from .react import OpenAIReActUnavailable, run_react_agent
 
 
 ROUTE_KEYWORDS = {
@@ -93,11 +94,41 @@ def route_request(
     separation_dereverb_model_type: str | None = None,
     separation_dereverb_model_path: str | Path | None = None,
     separation_dereverb_config_path: str | Path | None = None,
+    agent_engine: str = "auto",
+    openai_model: str | None = None,
+    skills_path: str | Path | list[str | Path] | None = None,
+    tools_path: str | Path | list[str | Path] | None = None,
+    max_steps: int = 8,
     progress: Callable[[str], None] | None = None,
 ) -> dict[str, object]:
-    """Route a natural-language request to one capability and execute it."""
+    """Route a natural-language request through OpenAI ReAct or keyword fallback."""
     if not request.strip():
         raise MusicAgentError("Agent request cannot be empty.")
+
+    runtime_options = locals().copy()
+    for key in ("agent_engine", "openai_model", "skills_path", "tools_path", "max_steps"):
+        runtime_options.pop(key, None)
+
+    engine = agent_engine.strip().lower()
+    if engine not in {"auto", "openai", "keyword"}:
+        raise MusicAgentError("agent_engine must be one of: auto, openai, keyword.")
+
+    fallback_reason: str | None = None
+    if engine != "keyword":
+        try:
+            return run_react_agent(
+                request,
+                runtime_options,
+                model=openai_model,
+                skills_path=skills_path,
+                tools_path=tools_path,
+                max_steps=max_steps,
+                progress=progress,
+            )
+        except OpenAIReActUnavailable as exc:
+            if engine == "openai":
+                raise
+            fallback_reason = str(exc)
 
     route, reason = _choose_route(request, audio)
     if route == "generate":
@@ -216,13 +247,17 @@ def route_request(
     else:
         raise MusicAgentError(f"Unsupported route: {route}")
 
-    return {
+    payload: dict[str, object] = {
         "capability": "agent",
+        "engine": "keyword",
         "request": request,
         "routed_to": route,
         "route_reason": reason,
         "result": result,
     }
+    if fallback_reason:
+        payload["fallback_reason"] = fallback_reason
+    return payload
 
 
 def _choose_route(request: str, audio: str | Path | None) -> tuple[str, str]:

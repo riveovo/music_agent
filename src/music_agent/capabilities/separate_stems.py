@@ -296,7 +296,7 @@ def _separate_heuristic(
     conversion: dict[str, object],
     progress: Callable[[str], None] | None = None,
 ) -> dict[str, object]:
-    """Create MVP-quality vocal and accompaniment approximations."""
+    """Create lightweight vocal and accompaniment approximations."""
     _report(progress, "Heuristic separation: checking ffmpeg")
     require_tool("ffmpeg")
     target_dir.mkdir(parents=True, exist_ok=True)

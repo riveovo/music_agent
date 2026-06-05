@@ -1,6 +1,5 @@
-"""Rule-based agent orchestration."""
+"""Agent orchestration."""
 
 from .router import route_request
 
 __all__ = ["route_request"]
-

@@ -1,4 +1,4 @@
-"""Command-line entrypoint for the AI music agent MVP."""
+"""Command-line entrypoint for the AI music agent."""
 
 from __future__ import annotations
 
@@ -30,11 +30,11 @@ from .voice_conversion import SVCFUSION_MODEL_TYPES
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="music-agent",
-        description="CLI-first MVP for independent music capabilities plus agent routing.",
+        description="CLI and ReAct agent toolkit for independent AI music capabilities.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    generate = subparsers.add_parser("generate", help="Generate a short MVP music clip.")
+    generate = subparsers.add_parser("generate", help="Generate a short music clip.")
     generate.add_argument("--prompt", required=True, help="Music prompt or idea.")
     generate.add_argument("--duration", type=float, default=8.0, help="Duration in seconds.")
     generate.add_argument("--style", help="Optional explicit style hint.")
@@ -215,6 +215,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     agent = subparsers.add_parser("agent", help="Route a natural-language request to a capability.")
     agent.add_argument("request", help="Natural-language request.")
+    agent.add_argument(
+        "--agent-engine",
+        default="auto",
+        choices=["auto", "openai", "keyword"],
+        help="Agent engine. 'auto' uses OpenAI ReAct when configured, otherwise keyword fallback.",
+    )
+    agent.add_argument("--openai-model", help="OpenAI model for the ReAct agent. Defaults to MUSIC_AGENT_OPENAI_MODEL or gpt-5.4-mini.")
+    agent.add_argument("--skills-path", help="Directory containing external */SKILL.md bundles.")
+    agent.add_argument("--tools-path", help="Directory containing external tool JSON configs.")
+    agent.add_argument("--max-steps", type=int, default=8, help="Maximum OpenAI ReAct model/tool steps.")
     agent.add_argument("--audio", help="Optional input audio for analysis/transform requests.")
     agent.add_argument("--duration", type=float, default=8.0, help="Generation duration in seconds.")
     agent.add_argument("--preset", default="bright", choices=sorted(PRESETS), help="Voice preset.")
@@ -326,6 +336,125 @@ def build_parser() -> argparse.ArgumentParser:
     agent.add_argument("--separation-dereverb-model-path", help="Optional RoFormer checkpoint for vocal dereverb/de-echo.")
     agent.add_argument("--separation-dereverb-config-path", help="Optional RoFormer YAML config for vocal dereverb/de-echo.")
     agent.set_defaults(handler=_handle_agent)
+
+    chat = subparsers.add_parser("chat", help="Start an interactive natural-language agent session.")
+    chat.add_argument(
+        "--agent-engine",
+        default="auto",
+        choices=["auto", "openai", "keyword"],
+        help="Agent engine. 'auto' uses OpenAI ReAct when configured, otherwise keyword fallback.",
+    )
+    chat.add_argument("--openai-model", help="OpenAI model for the ReAct chat session.")
+    chat.add_argument("--skills-path", help="Directory containing external */SKILL.md bundles.")
+    chat.add_argument("--tools-path", help="Directory containing external tool JSON configs.")
+    chat.add_argument("--max-steps", type=int, default=8, help="Maximum OpenAI ReAct model/tool steps per turn.")
+    chat.add_argument("--audio", help="Default input audio for analysis/transform requests.")
+    chat.add_argument("--duration", type=float, default=8.0, help="Default generation duration in seconds.")
+    chat.add_argument("--style", help="Optional generation style hint.")
+    chat.add_argument(
+        "--provider",
+        default="synth",
+        choices=sorted(GENERATION_PROVIDERS),
+        help="Generation backend for generation requests.",
+    )
+    chat.add_argument("--model", help="Optional generation model.")
+    chat.add_argument("--guidance-scale", type=float, default=3.0, help="MusicGen guidance scale.")
+    chat.add_argument("--seed", type=int, help="Optional generation seed.")
+    chat.add_argument("--output", help="Optional output path for generation or voice conversion.")
+    chat.add_argument("--audio-output-dir", help="Optional output directory for audio-input capabilities.")
+    chat.add_argument("--audio-recursive", action="store_true", help="Recursively process directories for audio-input capabilities.")
+    chat.add_argument("--audio-keep-converted", action="store_true", help="Keep converted WAV files for audio-input capabilities.")
+    chat.add_argument("--ncm-converter", help="Optional ncmdump-compatible command for audio-input capabilities.")
+    chat.add_argument("--analysis-provider", default="auto", choices=ANALYSIS_PROVIDERS, help="Analysis backend.")
+    chat.add_argument("--analysis-essentia-max-sections", type=int, default=12, help="Maximum A/B/C sections for Essentia analysis.")
+    chat.add_argument("--style-provider", default="auto", choices=STYLE_RECOGNITION_PROVIDERS, help="Style recognition backend.")
+    chat.add_argument("--style-essentia-model-type", choices=ESSENTIA_STYLE_MODEL_TYPES, help="Essentia style model type.")
+    chat.add_argument("--style-essentia-embedding-model-path", help="Path to the Essentia embedding model .pb.")
+    chat.add_argument("--style-essentia-classifier-model-path", help="Path to the Essentia genre/style classifier .pb.")
+    chat.add_argument("--style-essentia-metadata-path", help="Path to the Essentia classifier metadata JSON.")
+    chat.add_argument("--style-essentia-top-k", type=int, default=8, help="Number of style/tag predictions to return.")
+    chat.add_argument("--separation-provider", default="auto", choices=["auto", "heuristic", "msst"], help="Separation backend.")
+    chat.add_argument("--separation-model-type", choices=SUPPORTED_MODEL_TYPES, help="MSST model type for separation.")
+    chat.add_argument("--separation-model-path", help="Path to MSST/RoFormer checkpoint for separation.")
+    chat.add_argument("--separation-config-path", help="Path to MSST/RoFormer YAML config for separation.")
+    chat.add_argument("--separation-device", choices=["auto", "cpu", "cuda", "mps"], help="MSST inference device for separation.")
+    chat.add_argument("--separation-use-tta", action="store_true", help="Enable MSST TTA for stem separation.")
+    chat.add_argument("--separation-instrumental-model-type", choices=SUPPORTED_MODEL_TYPES, help="Optional RoFormer model type for cleaner accompaniment.")
+    chat.add_argument("--separation-instrumental-model-path", help="Optional RoFormer checkpoint for cleaner accompaniment.")
+    chat.add_argument("--separation-instrumental-config-path", help="Optional RoFormer YAML config for cleaner accompaniment.")
+    chat.add_argument("--separation-deharmony-model-type", choices=SUPPORTED_MODEL_TYPES, help="Optional RoFormer model type for vocal deharmony.")
+    chat.add_argument("--separation-deharmony-model-path", help="Optional RoFormer checkpoint for vocal deharmony.")
+    chat.add_argument("--separation-deharmony-config-path", help="Optional RoFormer YAML config for vocal deharmony.")
+    chat.add_argument("--separation-dereverb-model-type", choices=SUPPORTED_MODEL_TYPES, help="Optional RoFormer model type for vocal dereverb/de-echo.")
+    chat.add_argument("--separation-dereverb-model-path", help="Optional RoFormer checkpoint for vocal dereverb/de-echo.")
+    chat.add_argument("--separation-dereverb-config-path", help="Optional RoFormer YAML config for vocal dereverb/de-echo.")
+    chat.add_argument("--voice-provider", default="auto", choices=VOICE_CONVERSION_PROVIDERS, help="Voice conversion backend.")
+    chat.add_argument("--preset", default="bright", choices=sorted(PRESETS), help="Voice preset.")
+    chat.add_argument("--voice-svcfusion-model-type", choices=SVCFUSION_MODEL_TYPES, help="SVCFusion model type for voice conversion.")
+    chat.add_argument("--voice-svcfusion-model-path", help="Path to the SVCFusion cascade model checkpoint.")
+    chat.add_argument("--voice-svcfusion-config-path", help="Path to the SVCFusion config.yaml.")
+    chat.add_argument("--voice-svcfusion-speaker", help="Target speaker name in the SVCFusion model.")
+    chat.add_argument("--voice-svcfusion-device", choices=["auto", "cpu", "cuda", "mps"], help="SVCFusion inference device.")
+    chat.add_argument("--voice-svcfusion-source-path", help="Optional path to the checked-out HuanLinOTO/SVCFusion core repo.")
+    chat.add_argument("--voice-svcfusion-f0-method", default="rmvpe", help="SVCFusion F0 extractor name.")
+    chat.add_argument("--voice-svcfusion-key-change", type=float, default=0.0, help="Pitch shift in semitones for SVCFusion.")
+    chat.add_argument("--voice-svcfusion-formant-shift-key", type=float, default=0.0, help="Formant shift key for SVCFusion.")
+    chat.add_argument("--voice-svcfusion-method", default="auto", help="SVCFusion inference method parameter.")
+    chat.add_argument("--voice-svcfusion-threshold", type=float, default=-60.0, help="SVCFusion silence/noise threshold.")
+    chat.add_argument("--voice-svcfusion-infer-step", default="auto", help="SVCFusion infer_step parameter.")
+    chat.add_argument("--voice-svcfusion-t-start", default="auto", help="SVCFusion t_start parameter.")
+    chat.add_argument("--voice-svcfusion-vocal-register-factor", type=float, default=1.0, help="SVCFusion vocal register factor.")
+    chat.add_argument("--slice-output-dir", help="Optional output directory for audio slicing.")
+    chat.add_argument("--slice-recursive", action="store_true", help="Recursively process directories for audio slicing.")
+    chat.add_argument("--slice-min-length-ms", type=int, default=3000, help="Audio slicing minimum clip duration in milliseconds.")
+    chat.add_argument("--slice-max-length-ms", type=int, default=10000, help="Audio slicing maximum clip duration in milliseconds.")
+    chat.add_argument("--slice-keep-converted", action="store_true", help="Keep converted WAV files for audio slicing.")
+    chat.add_argument("--slice-ncm-converter", help="Optional ncmdump-compatible command for NCM audio slicing.")
+    chat.add_argument("--curation-min-length-ms", type=int, default=3000, help="Vocal curation minimum valid slice duration in milliseconds.")
+    chat.add_argument("--curation-max-length-ms", type=int, default=10000, help="Vocal curation maximum valid slice duration in milliseconds.")
+    chat.add_argument("--curation-distance-threshold", type=float, default=0.32, help="Vocal curation clustering distance threshold.")
+    chat.add_argument(
+        "--curation-embedding-model",
+        default="speechbrain/spkrec-ecapa-voxceleb",
+        help="SpeechBrain embedding model for vocal curation.",
+    )
+    chat.add_argument("--curation-model-cache-dir", help="Optional model cache directory for vocal curation.")
+    chat.add_argument("--curation-device", choices=["auto", "cpu", "cuda", "mps"], default="auto", help="Embedding inference device.")
+    chat.set_defaults(handler=_handle_chat)
+
+    web = subparsers.add_parser("web", help="Start the local ChatGPT-style web service.")
+    web.add_argument("--host", default="127.0.0.1", help="Host for the local web service.")
+    web.add_argument("--port", type=int, default=8765, help="Port for the local web service.")
+    web.add_argument(
+        "--agent-engine",
+        default="auto",
+        choices=["auto", "openai", "keyword"],
+        help="Default web session engine. 'auto' uses OpenAI ReAct when configured, otherwise keyword fallback.",
+    )
+    web.add_argument("--openai-model", help="OpenAI model for web ReAct sessions.")
+    web.add_argument("--skills-path", help="Directory containing external */SKILL.md bundles.")
+    web.add_argument("--tools-path", help="Directory containing external tool JSON configs.")
+    web.add_argument("--max-steps", type=int, default=8, help="Maximum OpenAI ReAct model/tool steps per turn.")
+    web.add_argument("--audio", help="Default input audio for web sessions.")
+    web.add_argument("--duration", type=float, default=8.0, help="Default generation duration in seconds.")
+    web.add_argument("--style", help="Optional generation style hint.")
+    web.add_argument(
+        "--provider",
+        default="synth",
+        choices=sorted(GENERATION_PROVIDERS),
+        help="Default generation backend for web sessions.",
+    )
+    web.add_argument("--model", help="Optional generation model.")
+    web.add_argument("--guidance-scale", type=float, default=3.0, help="MusicGen guidance scale.")
+    web.add_argument("--seed", type=int, help="Optional generation seed.")
+    web.add_argument("--output", help="Optional output path for generation or voice conversion.")
+    web.add_argument("--audio-output-dir", help="Optional output directory for audio-input capabilities.")
+    web.add_argument("--analysis-provider", default="auto", choices=ANALYSIS_PROVIDERS, help="Default analysis backend.")
+    web.add_argument("--style-provider", default="auto", choices=STYLE_RECOGNITION_PROVIDERS, help="Default style recognition backend.")
+    web.add_argument("--separation-provider", default="auto", choices=["auto", "heuristic", "msst"], help="Default separation backend.")
+    web.add_argument("--voice-provider", default="auto", choices=VOICE_CONVERSION_PROVIDERS, help="Default voice conversion backend.")
+    web.add_argument("--preset", default="bright", choices=sorted(PRESETS), help="Default voice preset.")
+    web.set_defaults(handler=_handle_web)
 
     return parser
 
@@ -539,11 +668,226 @@ def _handle_agent(args: argparse.Namespace) -> dict[str, object]:
         separation_dereverb_model_type=args.separation_dereverb_model_type,
         separation_dereverb_model_path=args.separation_dereverb_model_path,
         separation_dereverb_config_path=args.separation_dereverb_config_path,
+        agent_engine=args.agent_engine,
+        openai_model=args.openai_model,
+        skills_path=args.skills_path,
+        tools_path=args.tools_path,
+        max_steps=args.max_steps,
         progress=_print_progress,
     )
 
 
-def _print_json(payload: dict[str, Any], stream: Any = sys.stdout) -> None:
+def _handle_chat(args: argparse.Namespace) -> dict[str, object]:
+    from .agent.react import OpenAIReActUnavailable, ReActSession
+
+    engine = args.agent_engine.strip().lower()
+    runtime_options = _agent_runtime_options(args)
+    session: ReActSession | None = None
+    fallback_reason: str | None = None
+    if engine != "keyword":
+        try:
+            session = ReActSession(
+                runtime_options,
+                model=args.openai_model,
+                skills_path=args.skills_path,
+                tools_path=args.tools_path,
+                progress=_print_progress,
+            )
+        except OpenAIReActUnavailable as exc:
+            if engine == "openai":
+                raise
+            fallback_reason = str(exc)
+
+    actual_engine = "openai_react" if session is not None else "keyword"
+    _print_progress(f"Chat session started with engine={actual_engine}. Type /exit to quit, /help for commands.")
+    if fallback_reason:
+        _print_progress(f"Chat fallback: {fallback_reason}")
+
+    turns = 0
+    last_result: dict[str, object] | None = None
+    while True:
+        line = _read_chat_line()
+        if line is None:
+            break
+        request = line.strip()
+        if not request:
+            continue
+        if request in {"/exit", "/quit", "exit", "quit"}:
+            break
+        if request == "/help":
+            _print_chat_help()
+            continue
+        if request == "/clear":
+            if session is not None:
+                session.clear()
+            _print_progress("Chat context cleared.")
+            continue
+        if request.startswith("/audio "):
+            args.audio = request[len("/audio ") :].strip() or None
+            runtime_options["audio"] = args.audio
+            _print_progress(f"Default audio set to: {args.audio}")
+            continue
+
+        try:
+            if session is not None:
+                result = session.ask(request, max_steps=args.max_steps)
+            else:
+                result = route_request(
+                    **_agent_request_kwargs(
+                        args,
+                        request,
+                        agent_engine="keyword",
+                        progress=_print_progress,
+                    )
+                )
+        except MusicAgentError as exc:
+            _print_json({"ok": False, "error": str(exc)}, stream=sys.stderr)
+            continue
+
+        turns += 1
+        last_result = result
+        _print_json({"ok": True, "data": result})
+
+    return {
+        "capability": "chat",
+        "engine": actual_engine,
+        "turns": turns,
+        "fallback_reason": fallback_reason,
+        "last_result": last_result,
+    }
+
+
+def _handle_web(args: argparse.Namespace) -> dict[str, object]:
+    try:
+        import uvicorn
+    except ImportError as exc:
+        raise MusicAgentError("Web service requires web dependencies. Install with `python3.12 -m pip install -e '.[web]'`.") from exc
+
+    from .web import WebConfig, create_app
+
+    config = WebConfig(
+        agent_engine=args.agent_engine,
+        openai_model=args.openai_model,
+        skills_path=args.skills_path,
+        tools_path=args.tools_path,
+        max_steps=args.max_steps,
+        runtime_options=_agent_runtime_options(args),
+    )
+    app = create_app(config)
+    url = f"http://{args.host}:{args.port}"
+    _print_progress(f"Web service starting at {url}")
+    _print_progress("Open the URL in your browser. Press CTRL+C to stop.")
+    uvicorn.run(app, host=args.host, port=args.port)
+    return {
+        "capability": "web",
+        "url": url,
+        "engine": args.agent_engine,
+    }
+
+
+def _agent_runtime_options(args: argparse.Namespace) -> dict[str, object]:
+    kwargs = _agent_request_kwargs(args, "", agent_engine="keyword", progress=_print_progress)
+    for key in ("request", "agent_engine", "openai_model", "skills_path", "tools_path", "max_steps", "progress"):
+        kwargs.pop(key, None)
+    return kwargs
+
+
+def _agent_request_kwargs(
+    args: argparse.Namespace,
+    request: str,
+    *,
+    agent_engine: str | None = None,
+    progress: Any = None,
+) -> dict[str, object]:
+    value = lambda name, default=None: getattr(args, name, default)
+    return {
+        "request": request,
+        "audio": value("audio"),
+        "duration": value("duration", 8.0),
+        "preset": value("preset", "bright"),
+        "voice_provider": value("voice_provider", "auto"),
+        "voice_svcfusion_model_type": value("voice_svcfusion_model_type"),
+        "voice_svcfusion_model_path": value("voice_svcfusion_model_path"),
+        "voice_svcfusion_config_path": value("voice_svcfusion_config_path"),
+        "voice_svcfusion_speaker": value("voice_svcfusion_speaker"),
+        "voice_svcfusion_device": value("voice_svcfusion_device"),
+        "voice_svcfusion_source_path": value("voice_svcfusion_source_path"),
+        "voice_svcfusion_f0_method": value("voice_svcfusion_f0_method", "rmvpe"),
+        "voice_svcfusion_key_change": value("voice_svcfusion_key_change", 0.0),
+        "voice_svcfusion_formant_shift_key": value("voice_svcfusion_formant_shift_key", 0.0),
+        "voice_svcfusion_method": value("voice_svcfusion_method", "auto"),
+        "voice_svcfusion_threshold": value("voice_svcfusion_threshold", -60.0),
+        "voice_svcfusion_infer_step": value("voice_svcfusion_infer_step", "auto"),
+        "voice_svcfusion_t_start": value("voice_svcfusion_t_start", "auto"),
+        "voice_svcfusion_vocal_register_factor": value("voice_svcfusion_vocal_register_factor", 1.0),
+        "output": value("output"),
+        "style": value("style"),
+        "provider": value("provider", "synth"),
+        "model": value("model"),
+        "guidance_scale": value("guidance_scale", 3.0),
+        "seed": value("seed"),
+        "audio_output_dir": value("audio_output_dir"),
+        "audio_recursive": value("audio_recursive", False),
+        "audio_keep_converted": value("audio_keep_converted", False),
+        "audio_ncm_converter": value("ncm_converter"),
+        "analysis_provider": value("analysis_provider", "auto"),
+        "analysis_essentia_max_sections": value("analysis_essentia_max_sections", 12),
+        "slice_output_dir": value("slice_output_dir"),
+        "slice_recursive": value("slice_recursive", False),
+        "slice_min_length_ms": value("slice_min_length_ms", 3000),
+        "slice_max_length_ms": value("slice_max_length_ms", 10000),
+        "slice_keep_converted": value("slice_keep_converted", False),
+        "slice_ncm_converter": value("slice_ncm_converter"),
+        "style_provider": value("style_provider", "auto"),
+        "style_essentia_model_type": value("style_essentia_model_type"),
+        "style_essentia_embedding_model_path": value("style_essentia_embedding_model_path"),
+        "style_essentia_classifier_model_path": value("style_essentia_classifier_model_path"),
+        "style_essentia_metadata_path": value("style_essentia_metadata_path"),
+        "style_essentia_top_k": value("style_essentia_top_k", 8),
+        "curation_min_length_ms": value("curation_min_length_ms", 3000),
+        "curation_max_length_ms": value("curation_max_length_ms", 10000),
+        "curation_distance_threshold": value("curation_distance_threshold", 0.32),
+        "curation_embedding_model": value("curation_embedding_model", "speechbrain/spkrec-ecapa-voxceleb"),
+        "curation_model_cache_dir": value("curation_model_cache_dir"),
+        "curation_device": value("curation_device", "auto"),
+        "separation_provider": value("separation_provider", "auto"),
+        "separation_model_type": value("separation_model_type"),
+        "separation_model_path": value("separation_model_path"),
+        "separation_config_path": value("separation_config_path"),
+        "separation_device": value("separation_device"),
+        "separation_use_tta": value("separation_use_tta", False),
+        "separation_instrumental_model_type": value("separation_instrumental_model_type"),
+        "separation_instrumental_model_path": value("separation_instrumental_model_path"),
+        "separation_instrumental_config_path": value("separation_instrumental_config_path"),
+        "separation_deharmony_model_type": value("separation_deharmony_model_type"),
+        "separation_deharmony_model_path": value("separation_deharmony_model_path"),
+        "separation_deharmony_config_path": value("separation_deharmony_config_path"),
+        "separation_dereverb_model_type": value("separation_dereverb_model_type"),
+        "separation_dereverb_model_path": value("separation_dereverb_model_path"),
+        "separation_dereverb_config_path": value("separation_dereverb_config_path"),
+        "agent_engine": agent_engine or value("agent_engine", "auto"),
+        "openai_model": value("openai_model"),
+        "skills_path": value("skills_path"),
+        "tools_path": value("tools_path"),
+        "max_steps": value("max_steps", 8),
+        "progress": progress,
+    }
+
+
+def _read_chat_line() -> str | None:
+    if sys.stdin.isatty():
+        print("music-agent> ", end="", file=sys.stderr, flush=True)
+    line = sys.stdin.readline()
+    return None if line == "" else line
+
+
+def _print_chat_help() -> None:
+    _print_progress("Chat commands: /exit quit, /clear clear OpenAI context, /audio PATH set default audio, /help show this help.")
+
+
+def _print_json(payload: dict[str, Any], stream: Any = None) -> None:
+    if stream is None:
+        stream = sys.stdout
     print(json.dumps(payload, ensure_ascii=False, indent=2), file=stream)
 
 
